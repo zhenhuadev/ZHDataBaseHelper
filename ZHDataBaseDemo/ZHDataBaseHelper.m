@@ -70,6 +70,14 @@ static NSString *const UPDATE_ONE_UNIVERSA_ITEM_CONDITON_SQL =
 
 /** 查询 */
 static NSString *const SELECT_WITH_SEARCH_CONDITION_SQL = @"SELECT * from ";
+/** 统计和条件 **/
+static NSString *const SELECT_ID_DEFINED_COUNT_SQL =
+@"SELECT count(id) as count from %@";
+/** 拼接时间的sql */
+static NSString *const SELECT_MOSAIC_TIME_SQL =
+@"order by createdTime desc, position  desc";
+/** 拼接降序sql */
+static NSString *const ORDER_BY_DESC = @"order by %@ desc";
 
 /** 升序排列 */
 NSString *const SORT_ASC = @"ASC";
@@ -141,31 +149,6 @@ ZHSingletonImplementation(ZHDataBaseHelper)
     [self _createTable:tableName sql:[NSString stringWithFormat:CREATE_A_UNIVERSAL_DATA_STORE_TABLE_SQL,tableName]];
 }
 
-- (BOOL)_createTable:(NSString *)tableName
-                 sql:(NSString *)createSql {
-    
-    if ([self _isValidTableName:tableName] == NO) {
-        NSLog(@"表名称非法");
-        return NO;
-    }
-    NSString *create_table_sql = createSql;
-    NSLog(@"\n -----===SQL执行===----- \n%@",createSql);
-    
-    __block BOOL result = NO;
-    [_dbQueue inDatabase:^(FMDatabase *db) {
-        
-        if (![db tableExists:tableName]) {
-            
-            result = [db executeUpdate:create_table_sql];
-            
-            if (!result) {
-                
-                NSLog(@"ERROR, 创表 出错 create table: %@", tableName);
-            }
-        }
-    }];
-    return result;
-}
 
 // 清空一个表
 - (void)cleanTable:(NSString *)tableName {
@@ -514,6 +497,125 @@ ZHSingletonImplementation(ZHDataBaseHelper)
     return result;
 }
 
+#pragma mark --> 4、查找数据
+/**
+ *  根据某条id  查询某条数据  (返回的是ZHUniversalDBDataModel 模型)
+ */
+- (ZHUniversalDBDataModel *)searchOneUniversalDataModelById:(NSString *)itemId fromTable:(NSString *)tableName {
+    NSArray *array =
+    [self searchUniversalDataModelWithSearchCondition:[NSString stringWithFormat:@"%@ = '%@'",updateId, itemId]
+                                          searchCount:1
+                                            fromTable:tableName];
+    if (array && array.count > 0) {
+        
+        return [array lastObject];
+    }
+    
+    return nil;
+}
+
+- (NSArray *)searchUniversalDataModelWithSearchCondition:(NSString *)searchCondition searchCount:(int)searchCount fromTable:(NSString *)tableName {
+    
+    if ([self _isValidTableName:tableName]) {
+        return nil;
+    }
+    NSString *sql;
+    if (searchCondition) {
+        sql = [NSString stringWithFormat:@"%@ %@ where %@ %@",SELECT_WITH_SEARCH_CONDITION_SQL,tableName,searchCondition,SELECT_MOSAIC_TIME_SQL];
+    } else {
+        sql = [NSString stringWithFormat:@"%@ %@ %@",SELECT_WITH_SEARCH_CONDITION_SQL,tableName,SELECT_MOSAIC_TIME_SQL];
+    }
+    
+    if (searchCount) {
+        sql = [NSString stringWithFormat:@"%@ Limit %d",sql, searchCount];
+    }
+    return [self searchUniversalDataModelsWithSQL:sql fromTableName:tableName];
+}
+
+- (NSArray *)searchUniversalDataModelsWithSQL:(NSString *)sql fromTableName:(NSString *)tableName {
+    
+    __block NSMutableArray *result = [NSMutableArray array];
+    [self _executeDB:^(FMDatabase *db) {
+        FMResultSet *rs = [db executeQuery:sql];
+        while ([rs next]) {
+            ZHUniversalDBDataModel *mode = [[ZHUniversalDBDataModel alloc] init];
+            mode.itemId = [rs stringForColumn:updateId];
+            mode.json = [rs stringForColumn:updateObject];
+            mode.jsonClassName = [rs stringForColumn:updateJsonClassName];
+            mode.createdTime = [rs stringForColumn:updateCreatedTime];
+            mode.type = [rs stringForColumn:updateType];
+            mode.position = [rs stringForColumn:updatePosition];
+            mode.text1 = [rs stringForColumn:updateText1];
+            mode.text2 = [rs stringForColumn:updateText2];
+            mode.text3 = [rs stringForColumn:updateText3];
+            [result addObject:mode];
+        }
+        [rs close];
+    }];
+    return result;
+}
+
+/**
+ 查询出所有的通用型数据
+
+ @param tableName 表名称
+ @return ZHUniversalDBDataModel数组
+ */
+- (NSArray *)searchAllUniversalDataModelFromTable:(NSString *)tableName {
+    
+    NSString *sql = [NSString stringWithFormat:@"%@%@",SELECT_WITH_SEARCH_CONDITION_SQL,tableName];
+    return [self searchUniversalDataModelsWithSQL:sql fromTableName:tableName];
+}
+
+/**
+ 清空表
+
+ @param tableName 表名称
+ @return YES NO
+ */
+- (BOOL)cleanAllDataForTable:(NSString *)tableName {
+    
+    __block NSString *sql = [NSString stringWithFormat:
+                             CLEAN_ALL_UNIVERSA_TABLE_SQL,
+                             tableName];
+    
+    __block BOOL ret = NO;
+    [self _executeDB:^(FMDatabase *db) {
+        
+        ret = [db executeUpdate:sql];
+    }];
+    
+    return ret;
+}
+
+#pragma mark --> 私有方法
+// 创建表
+- (BOOL)_createTable:(NSString *)tableName
+                 sql:(NSString *)createSql {
+    
+    if ([self _isValidTableName:tableName] == NO) {
+        NSLog(@"表名称非法");
+        return NO;
+    }
+    NSString *create_table_sql = createSql;
+    NSLog(@"\n -----===SQL执行===----- \n%@",createSql);
+    
+    __block BOOL result = NO;
+    [_dbQueue inDatabase:^(FMDatabase *db) {
+        
+        if (![db tableExists:tableName]) {
+            
+            result = [db executeUpdate:create_table_sql];
+            
+            if (!result) {
+                
+                NSLog(@"ERROR, 创表 出错 create table: %@", tableName);
+            }
+        }
+    }];
+    return result;
+}
+
 
 // 是否存在表
 - (BOOL)_isExistTableName:(NSString *)tableName {
@@ -529,7 +631,6 @@ ZHSingletonImplementation(ZHDataBaseHelper)
     return result;
 }
 
-#pragma mark --> 私有方法
 - (BOOL)_isValidTableName:(NSString *)tableName {
     
     if (tableName == nil || tableName.length == 0 || [tableName rangeOfString:@" "].location != NSNotFound) {
@@ -554,5 +655,92 @@ ZHSingletonImplementation(ZHDataBaseHelper)
     }];
     [_threadLock unlock];
 }
+
+
+/**
+ 执行插入SQL
+ */
+- (BOOL)_executeInsertSQL:(NSString *)insertSql
+                andValues:(NSArray *)values {
+    
+    __block BOOL ret = NO;
+    
+    NSLog(@"执行insert sql：%@",insertSql);
+    [self _executeDB:^(FMDatabase *db) {
+        
+        ret = [db executeUpdate:insertSql withArgumentsInArray:values];
+    }];
+    
+    return ret;
+}
+
+- (BOOL)_executeInsertSQL:(NSString *)insertSql
+  withParameterDictionary:(NSDictionary *)valueDic {
+    
+    __block BOOL ret = NO;
+    
+    NSLog(@"执行insert sql：%@",insertSql);
+    [self _executeDB:^(FMDatabase *db) {
+        
+        ret = [db executeUpdate:insertSql withParameterDictionary:valueDic];
+    }];
+    
+    return ret;
+}
+
+/**
+ 执行删除SQL
+ */
+- (BOOL)_executeDeleteSQL:(NSString *)deleteSql {
+    
+    __block BOOL ret = NO;
+    
+    NSLog(@"执行Delete sql：%@",deleteSql);
+    
+    [self _executeDB:^(FMDatabase *db) {
+        
+        ret = [db executeUpdate:deleteSql];
+    }];
+    
+    return ret;
+}
+
+
+/**
+ 执行更新SQL
+ */
+- (BOOL)_executeUpdateSQL:(NSString *)updateSql {
+    
+    __block BOOL ret = NO;
+    NSLog(@"执行updateSql sql：%@",updateSql);
+    
+    [self _executeDB:^(FMDatabase *db) {
+        
+        ret = [db executeUpdate:updateSql];
+    }];
+    
+    return ret;
+}
+
+/**
+ 执行查询SQL
+ */
+- (BOOL)_executeSearchSQL:(NSString *)searchSql {
+    
+    __block BOOL ret = NO;
+    NSLog(@"执行searchSql sql：%@",searchSql);
+    
+    [self _executeDB:^(FMDatabase *db) {
+        
+        FMResultSet *rs = [db executeQuery:searchSql];
+        while ([rs next]) {
+            
+        }
+        [rs close];
+    }];
+    
+    return ret;
+}
+
 
 @end
